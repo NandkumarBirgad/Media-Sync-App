@@ -4,9 +4,9 @@ import LandingPage from '@/components/LandingPage';
 import RoomView from '@/components/RoomView';
 
 const AppContent: React.FC = () => {
-  const { isConnected } = useRoom();
+  const { room } = useRoom();
 
-  return isConnected ? <RoomView /> : <LandingPage />;
+  return room ? <RoomView /> : <LandingPage />;
 };
 
 const Index: React.FC = () => {

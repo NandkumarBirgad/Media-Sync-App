@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Media Sync - Example Client</title>
+    <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .status {
+            padding: 10px 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .section {
+            margin-bottom: 30px;
+        }
+        .section h2 {
+            color: #555;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+        input, button {
+            padding: 12px 15px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        input {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #5568d3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .controls button {
+            flex: 1;
+            min-width: 120px;
+        }
+        .room-info {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+        .room-info p {
+            margin-bottom: 8px;
+            color: #555;
+        }
+        .room-info strong {
+            color: #333;
+        }
+        video {
+            width: 100%;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            background: #000;
+        }
+        .logs {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 6px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 3px 0;
+        }
+        .log-entry.success {
+            color: #4ec9b0;
+        }
+        .log-entry.error {
+            color: #f48771;
+        }
+        .log-entry.info {
+            color: #569cd6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 Media Sync - Example Client</h1>
+        <div id="status" class="status disconnected">
+            Disconnected
+        </div>
+
+        <!-- Room Management -->
+        <div class="section">
+            <h2>Room Management</h2>
+            <input type="text" id="roomIdInput" placeholder="Enter Room ID (optional for create)">
+            <div class="controls">
+                <button onclick="createRoom()">Create Room</button>
+                <button onclick="joinRoom()">Join Room</button>
+                <button onclick="leaveRoom()">Leave Room</button>
+            </div>
+        </div>
+
+        <!-- Room Info -->
+        <div id="roomInfo" class="room-info" style="display: none;">
+            <p><strong>Room ID:</strong> <span id="currentRoomId">-</span></p>
+            <p><strong>Your Socket ID:</strong> <span id="yourSocketId">-</span></p>
+            <p><strong>Are you host?</strong> <span id="isHost">-</span></p>
+            <p><strong>Participants:</strong> <span id="participantCount">-</span></p>
+        </div>
+
+        <!-- Media Controls -->
+        <div class="section">
+            <h2>Media Controls (Host Only)</h2>
+            <input type="text" id="mediaUrlInput" placeholder="Media URL (e.g., https://example.com/video.mp4)">
+            <button onclick="changeMedia()" style="margin-bottom: 15px;">Load Media</button>
+
+            <video id="videoPlayer" controls></video>
+
+            <div class="controls">
+                <button onclick="play()">▶️ Play</button>
+                <button onclick="pause()">⏸️ Pause</button>
+                <button onclick="seek(-10)">⏪ -10s</button>
+                <button onclick="seek(10)">⏩ +10s</button>
+            </div>
+        </div>
+
+        <!-- Event Logs -->
+        <div class="section">
+            <h2>Event Logs</h2>
+            <div id="logs" class="logs"></div>
+        </div>
+    </div>
+
+    <script>
+        // Connect to server
+        const socket = io('http://localhost:3000');
+        
+        let currentRoom = null;
+        let isRoomHost = false;
+        const videoPlayer = document.getElementById('videoPlayer');
+
+        // Connection handlers
+        socket.on('connect', () => {
+            updateStatus(true);
+            document.getElementById('yourSocketId').textContent = socket.id;
+            log('Connected to server', 'success');
+        });
+
+        socket.on('disconnect', () => {
+            updateStatus(false);
+            log('Disconnected from server', 'error');
+        });
+
+        // Room event handlers
+        socket.on('media:sync', (data) => {
+            log(`Media synced: ${data.mediaUrl}`, 'info');
+            if (data.mediaUrl) {
+                videoPlayer.src = data.mediaUrl;
+                videoPlayer.currentTime = data.currentTime;
+                if (data.isPlaying) {
+                    videoPlayer.play();
+                }
+            }
+        });
+
+        socket.on('media:play', (data) => {
+            log(`Media playing at ${data.currentTime}s`, 'info');
+            videoPlayer.currentTime = data.currentTime;
+            videoPlayer.play();
+        });
+
+        socket.on('media:pause', (data) => {
+            log(`Media paused at ${data.currentTime}s`, 'info');
+            videoPlayer.currentTime = data.currentTime;
+            videoPlayer.pause();
+        });
+
+        socket.on('media:seek', (data) => {
+            log(`Seeked to ${data.currentTime}s`, 'info');
+            videoPlayer.currentTime = data.currentTime;
+            if (data.isPlaying) {
+                videoPlayer.play();
+            } else {
+                videoPlayer.pause();
+            }
+        });
+
+        socket.on('media:change', (data) => {
+            log(`Media changed to: ${data.mediaUrl}`, 'info');
+            videoPlayer.src = data.mediaUrl;
+            videoPlayer.currentTime = 0;
+        });
+
+        socket.on('user:joined', (data) => {
+            log(`User joined: ${data.socketId}`, 'success');
+            updateParticipantCount(data.participantCount);
+        });
+
+        socket.on('user:left', (data) => {
+            log(`User left: ${data.socketId}`, 'info');
+            updateParticipantCount(data.participantCount);
+        });
+
+        socket.on('user:disconnected', (data) => {
+            log(`User disconnected: ${data.socketId}`, 'info');
+            updateParticipantCount(data.participantCount);
+        });
+
+        socket.on('host:updated', (data) => {
+            log(data.message, 'success');
+            isRoomHost = (data.newHostSocketId === socket.id);
+            updateHostStatus();
+        });
+
+        // Room functions
+        function createRoom() {
+            const roomId = document.getElementById('roomIdInput').value.trim() || undefined;
+            socket.emit('room:create', { roomId }, (response) => {
+                if (response.success) {
+                    currentRoom = response.room;
+                    isRoomHost = true;
+                    updateRoomInfo();
+                    log(`Room created: ${response.room.roomId}`, 'success');
+                } else {
+                    log(`Error: ${response.error}`, 'error');
+                }
+            });
+        }
+
+        function joinRoom() {
+            const roomId = document.getElementById('roomIdInput').value.trim();
+            if (!roomId) {
+                log('Please enter a room ID', 'error');
+                return;
+            }
+            socket.emit('room:join', { roomId }, (response) => {
+                if (response.success) {
+                    currentRoom = response.room;
+                    isRoomHost = (response.room.hostSocketId === socket.id);
+                    updateRoomInfo();
+                    log(`Joined room: ${response.room.roomId}`, 'success');
+                } else {
+                    log(`Error: ${response.error}`, 'error');
+                }
+            });
+        }
+
+        function leaveRoom() {
+            socket.emit('room:leave', (response) => {
+                if (response.success) {
+                    currentRoom = null;
+                    isRoomHost = false;
+                    updateRoomInfo();
+                    log('Left room', 'success');
+                } else {
+                    log(`Error: ${response.error}`, 'error');
+                }
+            });
+        }
+
+        // Media functions
+        function changeMedia() {
+            const mediaUrl = document.getElementById('mediaUrlInput').value.trim();
+            if (!mediaUrl) {
+                log('Please enter a media URL', 'error');
+                return;
+            }
+            if (!isRoomHost) {
+                log('Only host can change media', 'error');
+                return;
+            }
+            socket.emit('media:change', { mediaUrl }, (response) => {
+                if (response.success) {
+                    log('Media changed', 'success');
+                } else {
+                    log(`Error: ${response.error}`, 'error');
+                }
+            });
+        }
+
+        function play() {
+            if (!isRoomHost) {
+                log('Only host can control playback', 'error');
+                return;
+            }
+            socket.emit('media:play', { currentTime: videoPlayer.currentTime }, (response) => {
+                if (!response.success) {
+                    log(`Error: ${response.error}`, 'error');
+                }
+            });
+        }
+
+        function pause() {
+            if (!isRoomHost) {
+                log('Only host can control playback', 'error');
+                return;
+            }
+            socket.emit('media:pause', { currentTime: videoPlayer.currentTime }, (response) => {
+                if (!response.success) {
+                    log(`Error: ${response.error}`, 'error');
+                }
+            });
+        }
+
+        function seek(seconds) {
+            if (!isRoomHost) {
+                log('Only host can control playback', 'error');
+                return;
+            }
+            const newTime = Math.max(0, videoPlayer.currentTime + seconds);
+            socket.emit('media:seek', { currentTime: newTime }, (response) => {
+                if (!response.success) {
+                    log(`Error: ${response.error}`, 'error');
+                }
+            });
+        }
+
+        // UI update functions
+        function updateStatus(connected) {
+            const statusEl = document.getElementById('status');
+            if (connected) {
+                statusEl.className = 'status connected';
+                statusEl.textContent = `Connected (${socket.id})`;
+            } else {
+                statusEl.className = 'status disconnected';
+                statusEl.textContent = 'Disconnected';
+            }
+        }
+
+        function updateRoomInfo() {
+            const roomInfoEl = document.getElementById('roomInfo');
+            if (currentRoom) {
+                roomInfoEl.style.display = 'block';
+                document.getElementById('currentRoomId').textContent = currentRoom.roomId;
+                updateHostStatus();
+                updateParticipantCount(currentRoom.participantCount);
+            } else {
+                roomInfoEl.style.display = 'none';
+            }
+        }
+
+        function updateHostStatus() {
+            document.getElementById('isHost').textContent = isRoomHost ? 'Yes ⭐' : 'No';
+        }
+
+        function updateParticipantCount(count) {
+            document.getElementById('participantCount').textContent = count;
+        }
+
+        function log(message, type = 'info') {
+            const logsEl = document.getElementById('logs');
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry ${type}`;
+            logEntry.textContent = `[${timestamp}] ${message}`;
+            logsEl.appendChild(logEntry);
+            logsEl.scrollTop = logsEl.scrollHeight;
+        }
+    </script>
+</body>
+</html>

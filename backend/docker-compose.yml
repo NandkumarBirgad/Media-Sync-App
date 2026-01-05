@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  backend:
+    image: media-sync-backend
+    container_name: media-sync-backend
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      USE_MONGODB: "false"
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    container_name: media-sync-nginx
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped

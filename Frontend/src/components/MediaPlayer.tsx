@@ -23,7 +23,7 @@ const formatTime = (seconds: number) => {
 const MediaPlayer: React.FC = () => {
   const { room, isHost, updateMediaState } = useRoom();
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
-  const progressInterval = useRef<number>();
+  const progressInterval = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     if (room?.mediaState.isPlaying) {
@@ -87,7 +87,7 @@ const MediaPlayer: React.FC = () => {
           className="w-full h-full object-cover"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-background/80 via-transparent to-transparent" />
-        
+
         {/* Live Sync Indicator */}
         <div className="absolute top-4 left-4 flex items-center gap-2 glass px-3 py-1.5 rounded-full">
           <Radio className="h-4 w-4 text-primary animate-sync-pulse" />
@@ -106,9 +106,8 @@ const MediaPlayer: React.FC = () => {
         <button
           onClick={handlePlayPause}
           disabled={!isHost}
-          className={`absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity ${
-            !isHost ? 'cursor-not-allowed' : 'cursor-pointer'
-          }`}
+          className={`absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity ${!isHost ? 'cursor-not-allowed' : 'cursor-pointer'
+            }`}
         >
           <div className="h-20 w-20 rounded-full bg-primary/90 backdrop-blur flex items-center justify-center glow-primary transition-transform hover:scale-110">
             {mediaState.isPlaying ? (
@@ -194,7 +193,7 @@ const MediaPlayer: React.FC = () => {
                 <Volume2 className="h-4 w-4" />
               )}
             </Button>
-            
+
             {showVolumeSlider && (
               <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 glass rounded-lg p-3 w-8 h-28">
                 <Slider
