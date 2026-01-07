@@ -182,20 +182,22 @@ class SocketHandler {
             if (!room) throw new Error('Not in any room');
             if (room.hostSocketId !== socket.id) throw new Error('Only host can control playback');
 
-            const { mediaUrl } = data;
+            const { mediaUrl, mediaTitle } = data;
             if (!mediaUrl) throw new Error('Media URL is required');
 
             const updatedRoom = await this.roomService.updateRoomState(room.roomId, {
                 mediaUrl,
+                mediaTitle,
                 currentTime: 0,
-                isPlaying: false,
+                isPlaying: true, // Auto-play on change
             });
 
-            console.log(`[Media] Changed in ${room.roomId} to ${mediaUrl}`);
+            console.log(`[Media] Changed in ${room.roomId} to ${mediaUrl} (${mediaTitle})`);
             this.io.to(room.roomId).emit('media:change', {
                 mediaUrl: updatedRoom.mediaUrl,
+                mediaTitle: updatedRoom.mediaTitle || 'Shared Media',
                 currentTime: 0,
-                isPlaying: false,
+                isPlaying: true, // Auto-play broadcast
                 timestamp: Date.now(),
             });
 

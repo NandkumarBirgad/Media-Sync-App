@@ -48,4 +48,5 @@ export interface RoomContextType {
   leaveRoom: () => void;
   sendMessage: (content: string) => void;
   updateMediaState: (state: Partial<MediaState>) => void;
+  changeMedia: (mediaUrl: string, mediaTitle?: string) => void;
 }

@@ -307,6 +307,20 @@ export const RoomProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [room]);
 
+  const changeMedia = useCallback((mediaUrl: string, mediaTitle?: string) => {
+    if (!socketRef.current || !room) return;
+
+    // Optimistic update
+    setRoom(prev => prev ? {
+      ...prev,
+      mediaUrl,
+      mediaTitle: mediaTitle || prev.mediaTitle,
+      mediaState: { ...prev.mediaState, currentTime: 0, isPlaying: true } // Auto-play on change
+    } : prev);
+
+    socketRef.current.emit('media:change', { mediaUrl, mediaTitle });
+  }, [room]);
+
   const isHost = currentUser?.isHost ?? false;
 
   return (
@@ -321,6 +335,7 @@ export const RoomProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         leaveRoom,
         sendMessage,
         updateMediaState,
+        changeMedia,
       }}
     >
       {children}

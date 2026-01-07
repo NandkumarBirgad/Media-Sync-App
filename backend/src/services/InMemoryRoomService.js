@@ -88,6 +88,7 @@ class InMemoryRoomService {
         const room = this.rooms.get(roomId);
         if (!room) throw new Error('Room not found');
         if (updates.mediaUrl !== undefined) room.mediaUrl = updates.mediaUrl;
+        if (updates.mediaTitle !== undefined) room.mediaTitle = updates.mediaTitle;
         if (updates.isPlaying !== undefined) room.isPlaying = updates.isPlaying;
         if (updates.currentTime !== undefined) room.currentTime = updates.currentTime;
         room.lastUpdated = new Date();

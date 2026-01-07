@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import ReactPlayer from 'react-player';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import {
@@ -11,53 +12,83 @@ import {
   Maximize2,
   Radio,
   Lock,
+  Upload,
 } from 'lucide-react';
 import { useRoom } from '@/contexts/RoomContext';
+import { toast } from 'sonner';
 
 const formatTime = (seconds: number) => {
+  if (!seconds || isNaN(seconds)) return '0:00';
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 };
 
 const MediaPlayer: React.FC = () => {
-  const { room, isHost, updateMediaState } = useRoom();
+  const { room, isHost, updateMediaState, changeMedia } = useRoom();
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
-  const progressInterval = useRef<number | undefined>(undefined);
+  const playerRef = useRef<ReactPlayer>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Sync player position with room state when not host
   useEffect(() => {
-    if (room?.mediaState.isPlaying) {
-      progressInterval.current = window.setInterval(() => {
-        updateMediaState({
-          currentTime: Math.min(
-            (room?.mediaState.currentTime || 0) + 1,
-            room?.mediaState.duration || 0
-          ),
-        });
-      }, 1000);
-    }
+    if (!isHost && playerRef.current && room?.mediaState) {
+      // ReactPlayer might not be fully initialized or ref might not be the instance in some cases
+      // Safety check for getCurrentTime
+      if (typeof playerRef.current.getCurrentTime === 'function') {
+        const playerTime = playerRef.current.getCurrentTime();
+        const stateTime = room.mediaState.currentTime;
 
-    return () => {
-      if (progressInterval.current) {
-        clearInterval(progressInterval.current);
+        // Only seek if difference is significant (> 1s) to avoid jitter
+        if (Math.abs(playerTime - stateTime) > 1) {
+          playerRef.current.seekTo(stateTime, 'seconds');
+        }
       }
-    };
-  }, [room?.mediaState.isPlaying, updateMediaState]);
+    }
+  }, [room?.mediaState.currentTime, isHost]);
+
+  // Local state for smooth slider experience
+  const [played, setPlayed] = useState(0);
+  const [seeking, setSeeking] = useState(false);
+
+  // Reset played state when media changes (new video uploaded)
+  useEffect(() => {
+    setPlayed(0);
+  }, [room?.mediaUrl]);
+
+  // Sync with room state (external updates)
+  useEffect(() => {
+    if (!seeking && room?.mediaState) {
+      setPlayed(room.mediaState.currentTime);
+    }
+  }, [room?.mediaState.currentTime, seeking]);
 
   if (!room) return null;
 
-  const { mediaState, mediaTitle, mediaThumbnail } = room;
-  const progress = (mediaState.currentTime / mediaState.duration) * 100;
+  const { mediaState, mediaTitle, mediaThumbnail, mediaUrl } = room;
+  // Use room media URL
+  const currentUrl = mediaUrl;
+
+  const progress = mediaState.duration > 0
+    ? (played / mediaState.duration) * 100
+    : 0;
 
   const handlePlayPause = () => {
     if (!isHost) return;
     updateMediaState({ isPlaying: !mediaState.isPlaying });
   };
 
-  const handleSeek = (value: number[]) => {
+  const handleSeekChange = (value: number[]) => {
+    setPlayed((value[0] / 100) * mediaState.duration);
+  };
+
+  const handleSeekCommit = (value: number[]) => {
     if (!isHost) return;
     const newTime = (value[0] / 100) * mediaState.duration;
     updateMediaState({ currentTime: newTime });
+    if (playerRef.current) {
+      playerRef.current.seekTo(newTime, 'seconds');
+    }
   };
 
   const handleVolumeChange = (value: number[]) => {
@@ -74,54 +105,163 @@ const MediaPlayer: React.FC = () => {
     const newTime = direction === 'back'
       ? Math.max(0, mediaState.currentTime - skipAmount)
       : Math.min(mediaState.duration, mediaState.currentTime + skipAmount);
+
     updateMediaState({ currentTime: newTime });
+    if (playerRef.current) {
+      playerRef.current.seekTo(newTime, 'seconds');
+    }
+  };
+
+  const handleProgress = (state: { played: number; playedSeconds: number; loaded: number; loadedSeconds: number }) => {
+    if (!seeking) {
+      setPlayed(state.playedSeconds);
+    }
+  };
+
+  const handleDuration = (duration: number) => {
+    if (isHost && Math.abs(mediaState.duration - duration) > 1) {
+      updateMediaState({ duration });
+    }
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      if (!isHost) {
+        toast.error("Only host can upload videos");
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('video', file);
+
+      const uploadPromise = new Promise<{ url: string }>(async (resolve, reject) => {
+        try {
+          const response = await fetch(`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000'}/api/media/upload`, {
+            method: 'POST',
+            body: formData,
+          });
+          const data = await response.json();
+
+          if (data.success) {
+            changeMedia(data.data.url, file.name);
+            resolve({ url: data.data.url });
+          } else {
+            reject(new Error(data.error || 'Upload failed'));
+          }
+        } catch (err: any) {
+          reject(err);
+        }
+      });
+
+      toast.promise(uploadPromise, {
+        loading: 'Uploading media...',
+        success: 'Media uploaded and synced!',
+        error: (err) => `Upload failed: ${err.message}`,
+      });
+    }
+  };
+
+  const triggerFileUpload = () => {
+    fileInputRef.current?.click();
   };
 
   return (
     <div className="glass rounded-2xl p-4 lg:p-6">
-      {/* Media Thumbnail */}
-      <div className="relative aspect-video rounded-xl overflow-hidden mb-4 bg-muted group">
-        <img
-          src={mediaThumbnail}
-          alt={mediaTitle}
-          className="w-full h-full object-cover"
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileUpload}
+        accept="video/*,audio/*"
+        className="hidden"
+      />
+
+      {/* Media Player Container */}
+      <div className="relative aspect-video rounded-xl overflow-hidden mb-4 bg-muted group bg-black border-2 border-red-500">
+        {/* @ts-ignore */}
+        <ReactPlayer
+          key={currentUrl} // Force remount on URL change
+          ref={playerRef}
+          url={currentUrl}
+          width="100%"
+          height="100%"
+          playing={!!mediaState.isPlaying}
+          volume={mediaState.volume / 100}
+          muted={mediaState.isMuted}
+          onProgress={handleProgress as any}
+          onEnded={() => isHost && updateMediaState({ isPlaying: false })}
+          onError={(e) => {
+            console.error("ReactPlayer Error:", e);
+            toast.error("Error loading video. Format may not be supported or file wasn't found.");
+          }}
+          controls={true} // Enable native controls for debugging
+          style={{ position: 'absolute', top: 0, left: 0 }}
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-background/80 via-transparent to-transparent" />
+
+        {/* FALLBACK RAW VIDEO TEST */}
+        {currentUrl && (
+          <video
+            src={currentUrl}
+            controls
+            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 50, border: '2px solid yellow' }}
+            onError={(e) => console.error("Raw Video Tag Error", e)}
+          />
+        )}
+
+        {/* Overlays (Only show when hovering or paused, or always for some elements) */}
+        <div className="absolute inset-0 bg-gradient-to-t from-background/80 via-transparent to-transparent pointer-events-none" />
 
         {/* Live Sync Indicator */}
-        <div className="absolute top-4 left-4 flex items-center gap-2 glass px-3 py-1.5 rounded-full">
+        <div className="absolute top-4 left-4 flex items-center gap-2 glass px-3 py-1.5 rounded-full z-10">
           <Radio className="h-4 w-4 text-primary animate-sync-pulse" />
           <span className="text-xs font-medium text-foreground">LIVE SYNC</span>
         </div>
 
-        {/* Host Badge */}
-        {isHost && (
-          <div className="absolute top-4 right-4 flex items-center gap-2 bg-primary/20 border border-primary/30 px-3 py-1.5 rounded-full">
-            <Lock className="h-3 w-3 text-primary" />
-            <span className="text-xs font-medium text-primary">HOST CONTROLS</span>
-          </div>
-        )}
+        {/* Host Controls Badge & Upload */}
+        <div className="absolute top-4 right-4 flex items-center gap-2 z-30">
+          {isHost && (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="h-7 text-xs gap-1.5 bg-black/50 hover:bg-black/70 border-none text-white backdrop-blur-sm"
+                onClick={triggerFileUpload}
+              >
+                <Upload className="h-3 w-3" />
+                Upload
+              </Button>
+              <div className="flex items-center gap-2 bg-primary/20 border border-primary/30 px-3 py-1.5 rounded-full backdrop-blur-sm">
+                <Lock className="h-3 w-3 text-primary" />
+                <span className="text-xs font-medium text-primary">HOST</span>
+              </div>
+            </>
+          )}
+        </div>
 
-        {/* Center Play Button */}
-        <button
-          onClick={handlePlayPause}
-          disabled={!isHost}
-          className={`absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity ${!isHost ? 'cursor-not-allowed' : 'cursor-pointer'
+        {/* Center Play Button Overlay */}
+        <div
+          className={`absolute inset-0 flex items-center justify-center transition-opacity z-20 ${!mediaState.isPlaying || (room.participants.length > 1 && isHost) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
             }`}
         >
-          <div className="h-20 w-20 rounded-full bg-primary/90 backdrop-blur flex items-center justify-center glow-primary transition-transform hover:scale-110">
-            {mediaState.isPlaying ? (
-              <Pause className="h-8 w-8 text-primary-foreground ml-0" />
-            ) : (
-              <Play className="h-8 w-8 text-primary-foreground ml-1" />
-            )}
-          </div>
-        </button>
+          <button
+            onClick={handlePlayPause}
+            disabled={!isHost}
+            className={`transition-transform hover:scale-110 ${!isHost ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+          >
+            <div className="h-20 w-20 rounded-full bg-primary/90 backdrop-blur flex items-center justify-center glow-primary">
+              {mediaState.isPlaying ? (
+                <Pause className="h-8 w-8 text-primary-foreground ml-0" />
+              ) : (
+                <Play className="h-8 w-8 text-primary-foreground ml-1" />
+              )}
+            </div>
+          </button>
+        </div>
       </div>
 
       {/* Media Info */}
       <div className="mb-4">
-        <h3 className="text-lg font-semibold text-foreground truncate">{mediaTitle}</h3>
+        <h3 className="text-lg font-semibold text-foreground truncate">{mediaTitle || 'Shared Video'}</h3>
         <p className="text-sm text-muted-foreground">Synced with {room.participants.length} viewers</p>
       </div>
 
@@ -129,14 +269,17 @@ const MediaPlayer: React.FC = () => {
       <div className="space-y-2 mb-4">
         <Slider
           value={[progress]}
-          onValueChange={handleSeek}
+          onValueChange={handleSeekChange}
+          onValueCommit={handleSeekCommit}
           max={100}
           step={0.1}
           disabled={!isHost}
+          onPointerDown={() => setSeeking(true)}
+          onPointerUp={() => setSeeking(false)}
           className={`${!isHost ? 'opacity-60 cursor-not-allowed' : ''}`}
         />
         <div className="flex justify-between text-xs text-muted-foreground">
-          <span>{formatTime(mediaState.currentTime)}</span>
+          <span>{formatTime(played)}</span>
           <span>{formatTime(mediaState.duration)}</span>
         </div>
       </div>
@@ -195,7 +338,7 @@ const MediaPlayer: React.FC = () => {
             </Button>
 
             {showVolumeSlider && (
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 glass rounded-lg p-3 w-8 h-28">
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 glass rounded-lg p-3 w-8 h-28 z-30">
                 <Slider
                   value={[mediaState.isMuted ? 0 : mediaState.volume]}
                   onValueChange={handleVolumeChange}

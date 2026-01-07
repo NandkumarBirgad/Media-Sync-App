@@ -65,6 +65,58 @@ function initializeRoutes(roomService) {
     }
   });
 
+  // Media Upload Route
+  const multer = require('multer');
+  const path = require('path');
+  const fs = require('fs');
+  const { v4: uuidv4 } = require('uuid');
+
+  const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+      const uploadDir = path.join(__dirname, '../../uploads');
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir);
+      }
+      cb(null, uploadDir);
+    },
+    filename: function (req, file, cb) {
+      const uniqueSuffix = uuidv4();
+      const ext = path.extname(file.originalname);
+      cb(null, `video-${uniqueSuffix}${ext}`);
+    }
+  });
+
+  const upload = multer({
+    storage: storage,
+    limits: { fileSize: 500 * 1024 * 1024 } // 500MB limit
+  });
+
+  router.post('/media/upload', upload.single('video'), (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ success: false, error: 'No file uploaded' });
+      }
+
+      // Construct public URL
+      const protocol = req.protocol;
+      const host = req.get('host');
+      const fileUrl = `${protocol}://${host}/uploads/${req.file.filename}`;
+
+      res.json({
+        success: true,
+        data: {
+          url: fileUrl,
+          filename: req.file.filename,
+          originalName: req.file.originalname,
+          size: req.file.size
+        }
+      });
+    } catch (error) {
+      console.error('[API] Upload error:', error);
+      res.status(500).json({ success: false, error: 'Upload failed' });
+    }
+  });
+
   return router;
 }
 
