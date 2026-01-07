@@ -28,13 +28,20 @@ const MediaPlayer: React.FC = () => {
   const { room, isHost, updateMediaState, changeMedia } = useRoom();
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
   const playerRef = useRef<ReactPlayer>(null);
+  const nativeVideoRef = useRef<HTMLVideoElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const progressBarRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Local state for smooth slider experience
+  const [played, setPlayed] = useState(0);
+  const [seeking, setSeeking] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [localProgress, setLocalProgress] = useState(0);
 
   // Sync player position with room state when not host
   useEffect(() => {
-    if (!isHost && playerRef.current && room?.mediaState) {
-      // ReactPlayer might not be fully initialized or ref might not be the instance in some cases
-      // Safety check for getCurrentTime
+    if (!isHost && playerRef.current && room?.mediaState && !seeking && !isDragging) {
       if (typeof playerRef.current.getCurrentTime === 'function') {
         const playerTime = playerRef.current.getCurrentTime();
         const stateTime = room.mediaState.currentTime;
@@ -45,35 +52,34 @@ const MediaPlayer: React.FC = () => {
         }
       }
     }
-  }, [room?.mediaState.currentTime, isHost]);
+  }, [room?.mediaState.currentTime, isHost, seeking, isDragging]);
 
-  // Local state for smooth slider experience
-  const [played, setPlayed] = useState(0);
-  const [seeking, setSeeking] = useState(false);
-
-  // Reset played state when media changes (new video uploaded)
+  // Reset played state when media changes
   useEffect(() => {
     setPlayed(0);
+    setLocalProgress(0);
   }, [room?.mediaUrl]);
 
   // Sync with room state (external updates)
   useEffect(() => {
-    if (!seeking && room?.mediaState) {
+    if (!seeking && !isDragging && room?.mediaState) {
       setPlayed(room.mediaState.currentTime);
+      const progress = room.mediaState.duration > 0
+        ? (room.mediaState.currentTime / room.mediaState.duration) * 100
+        : 0;
+      setLocalProgress(progress);
     }
-  }, [room?.mediaState.currentTime, seeking]);
+  }, [room?.mediaState.currentTime, seeking, isDragging]);
 
   if (!room) return null;
 
-  const { mediaState, mediaTitle, mediaThumbnail, mediaUrl } = room;
-  // Use room media URL
+  const { mediaState, mediaTitle, mediaUrl } = room;
   const currentUrl = mediaUrl;
-  const nativeVideoRef = useRef<HTMLVideoElement>(null);
 
   // Sync Native Video with Room State
   useEffect(() => {
     const video = nativeVideoRef.current;
-    if (video && room?.mediaState) {
+    if (video && room?.mediaState && !seeking && !isDragging) {
       const { isPlaying, currentTime } = room.mediaState;
 
       // Sync Play/Pause
@@ -88,47 +94,158 @@ const MediaPlayer: React.FC = () => {
         video.currentTime = currentTime;
       }
     }
-  }, [room?.mediaState.isPlaying, room?.mediaState.currentTime]);
+  }, [room?.mediaState.isPlaying, room?.mediaState.currentTime, seeking, isDragging]);
 
   const handleNativePlay = () => {
     if (isHost && !mediaState.isPlaying) updateMediaState({ isPlaying: true });
   };
 
   const handleNativePause = () => {
-    if (isHost && mediaState.isPlaying) updateMediaState({ isPlaying: false });
-  };
-
-  const handleNativeTimeUpdate = () => {
-    if (nativeVideoRef.current && !seeking) {
-      setPlayed(nativeVideoRef.current.currentTime);
-      // Optional: Sync back to host if needed, but usually we let the seek commit handle it
+    if (isHost && mediaState.isPlaying) {
+      updateMediaState({
+        isPlaying: false,
+        currentTime: nativeVideoRef.current?.currentTime || mediaState.currentTime
+      });
     }
   };
 
-  const progress = mediaState.duration > 0
-    ? (played / mediaState.duration) * 100
-    : 0;
+  const handleNativeTimeUpdate = () => {
+    if (nativeVideoRef.current && !seeking && !isDragging) {
+      setPlayed(nativeVideoRef.current.currentTime);
+      const progress = mediaState.duration > 0
+        ? (nativeVideoRef.current.currentTime / mediaState.duration) * 100
+        : 0;
+      setLocalProgress(progress);
+    }
+  };
 
   const handlePlayPause = () => {
     if (!isHost) return;
-    updateMediaState({ isPlaying: !mediaState.isPlaying });
+
+    let currentTime = mediaState.currentTime;
+    if (nativeVideoRef.current) {
+      currentTime = nativeVideoRef.current.currentTime;
+    } else if (playerRef.current) {
+      currentTime = playerRef.current.getCurrentTime();
+    }
+
+    updateMediaState({ isPlaying: !mediaState.isPlaying, currentTime });
   };
 
-  const handleSeekChange = (value: number[]) => {
-    setPlayed((value[0] / 100) * mediaState.duration);
+  const toggleFullScreen = () => {
+    if (!document.fullscreenElement) {
+      containerRef.current?.requestFullscreen().catch(err => {
+        console.error(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
+        toast.error("Fullscreen not supported");
+      });
+    } else {
+      document.exitFullscreen();
+    }
   };
 
-  const handleSeekCommit = (value: number[]) => {
-    if (!isHost) return;
-    const newTime = (value[0] / 100) * mediaState.duration;
-    updateMediaState({ currentTime: newTime });
+  // ===== FIXED SEEKING LOGIC =====
+
+  // Handle progress bar click (direct seek)
+  const handleProgressBarClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isHost || !progressBarRef.current) return;
+
+    const rect = progressBarRef.current.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const percentage = (clickX / rect.width) * 100;
+    const clampedPercentage = Math.max(0, Math.min(100, percentage));
+
+    const newTime = (clampedPercentage / 100) * mediaState.duration;
+
+    // Update immediately for smooth UX
+    setLocalProgress(clampedPercentage);
+    setPlayed(newTime);
+
+    // Seek player
     if (playerRef.current) {
       playerRef.current.seekTo(newTime, 'seconds');
     }
     if (nativeVideoRef.current) {
       nativeVideoRef.current.currentTime = newTime;
     }
+
+    // Update room state
+    updateMediaState({ currentTime: newTime });
   };
+
+  // Handle drag start
+  const handleProgressMouseDown = (e: React.MouseEvent) => {
+    if (!isHost) return;
+    setIsDragging(true);
+    setSeeking(true);
+    handleProgressDrag(e);
+  };
+
+  // Handle drag move
+  const handleProgressDrag = (e: React.MouseEvent) => {
+    if (!isDragging && !seeking) return;
+    if (!isHost || !progressBarRef.current) return;
+
+    const rect = progressBarRef.current.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const percentage = (clickX / rect.width) * 100;
+    const clampedPercentage = Math.max(0, Math.min(100, percentage));
+
+    const newTime = (clampedPercentage / 100) * mediaState.duration;
+
+    // Update local state for smooth dragging
+    setLocalProgress(clampedPercentage);
+    setPlayed(newTime);
+  };
+
+  // Handle drag end
+  const handleProgressMouseUp = () => {
+    if (!isDragging) return;
+    setIsDragging(false);
+    setSeeking(false);
+
+    // Commit the seek
+    const newTime = (localProgress / 100) * mediaState.duration;
+
+    if (playerRef.current) {
+      playerRef.current.seekTo(newTime, 'seconds');
+    }
+    if (nativeVideoRef.current) {
+      nativeVideoRef.current.currentTime = newTime;
+    }
+
+    updateMediaState({ currentTime: newTime });
+  };
+
+  // Add global mouse listeners for drag
+  useEffect(() => {
+    if (isDragging) {
+      const handleMouseMove = (e: MouseEvent) => {
+        if (!progressBarRef.current) return;
+        const rect = progressBarRef.current.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const percentage = (clickX / rect.width) * 100;
+        const clampedPercentage = Math.max(0, Math.min(100, percentage));
+
+        const newTime = (clampedPercentage / 100) * mediaState.duration;
+        setLocalProgress(clampedPercentage);
+        setPlayed(newTime);
+      };
+
+      const handleMouseUp = () => {
+        handleProgressMouseUp();
+      };
+
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+
+      return () => {
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+      };
+    }
+  }, [isDragging, mediaState.duration]);
+
+  // ===== END SEEKING LOGIC =====
 
   const handleVolumeChange = (value: number[]) => {
     updateMediaState({ volume: value[0], isMuted: value[0] === 0 });
@@ -155,8 +272,12 @@ const MediaPlayer: React.FC = () => {
   };
 
   const handleProgress = (state: { played: number; playedSeconds: number; loaded: number; loadedSeconds: number }) => {
-    if (!seeking) {
+    if (!seeking && !isDragging) {
       setPlayed(state.playedSeconds);
+      const progress = mediaState.duration > 0
+        ? (state.playedSeconds / mediaState.duration) * 100
+        : 0;
+      setLocalProgress(progress);
     }
   };
 
@@ -209,7 +330,7 @@ const MediaPlayer: React.FC = () => {
   };
 
   return (
-    <div className="glass rounded-2xl p-4 lg:p-6">
+    <div ref={containerRef} className="glass rounded-2xl p-4 lg:p-6 bg-background/50 backdrop-blur-xl">
       <input
         type="file"
         ref={fileInputRef}
@@ -230,6 +351,12 @@ const MediaPlayer: React.FC = () => {
             onPlay={handleNativePlay}
             onPause={handleNativePause}
             onTimeUpdate={handleNativeTimeUpdate}
+            onLoadedMetadata={(e) => {
+              const video = e.currentTarget;
+              if (isHost && video.duration) {
+                updateMediaState({ duration: video.duration });
+              }
+            }}
             onError={(e) => {
               console.error("Native Video Error", e);
               toast.error("Error loading video with native player.");
@@ -238,7 +365,7 @@ const MediaPlayer: React.FC = () => {
         ) : (
           // @ts-ignore
           <ReactPlayer
-            key={currentUrl} // Force remount on URL change
+            key={currentUrl}
             ref={playerRef}
             url={currentUrl}
             width="100%"
@@ -246,7 +373,7 @@ const MediaPlayer: React.FC = () => {
             playing={!!mediaState.isPlaying}
             volume={mediaState.volume / 100}
             muted={mediaState.isMuted}
-            // @ts-ignore - ReactPlayer types are sometimes finicky with custom config
+            // @ts-ignore
             config={{
               file: {
                 attributes: {
@@ -258,17 +385,17 @@ const MediaPlayer: React.FC = () => {
               }
             }}
             onProgress={handleProgress as any}
+            onDuration={handleDuration}
             onEnded={() => isHost && updateMediaState({ isPlaying: false })}
             onError={(e) => {
               console.error("ReactPlayer Error:", e);
               toast.error("Error loading video (Check console).");
             }}
-            controls={true} // Enable native controls as fallback
+            controls={false}
             style={{ position: 'absolute', top: 0, left: 0 }}
           />
         )}
 
-        {/* Overlays (Only show when hovering or paused, or always for some elements) */}
         <div className="absolute inset-0 bg-gradient-to-t from-background/80 via-transparent to-transparent pointer-events-none" />
 
         {/* Live Sync Indicator */}
@@ -325,19 +452,33 @@ const MediaPlayer: React.FC = () => {
         <p className="text-sm text-muted-foreground">Synced with {room.participants.length} viewers</p>
       </div>
 
-      {/* Progress Bar */}
+      {/* Custom Progress Bar with Click & Drag Support */}
       <div className="space-y-2 mb-4">
-        <Slider
-          value={[progress]}
-          onValueChange={handleSeekChange}
-          onValueCommit={handleSeekCommit}
-          max={100}
-          step={0.1}
-          disabled={!isHost}
-          onPointerDown={() => setSeeking(true)}
-          onPointerUp={() => setSeeking(false)}
-          className={`${!isHost ? 'opacity-60 cursor-not-allowed' : ''}`}
-        />
+        <div
+          ref={progressBarRef}
+          className={`relative w-full h-2 bg-white/10 rounded-full overflow-hidden cursor-pointer ${!isHost ? 'opacity-60 cursor-not-allowed' : ''}`}
+          onClick={handleProgressBarClick}
+          onMouseDown={handleProgressMouseDown}
+        >
+          {/* Progress Fill */}
+          <div
+            className="absolute top-0 left-0 h-full bg-gradient-to-r from-primary to-primary/80 transition-all duration-100"
+            style={{ width: `${localProgress}%` }}
+          />
+
+          {/* Draggable Handle */}
+          {isHost && (
+            <div
+              className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-primary rounded-full shadow-lg cursor-grab active:cursor-grabbing transition-transform hover:scale-125"
+              style={{ left: `calc(${localProgress}% - 8px)` }}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                handleProgressMouseDown(e as any);
+              }}
+            />
+          )}
+        </div>
+
         <div className="flex justify-between text-xs text-muted-foreground">
           <span>{formatTime(played)}</span>
           <span>{formatTime(mediaState.duration)}</span>
@@ -410,7 +551,7 @@ const MediaPlayer: React.FC = () => {
             )}
           </div>
 
-          <Button variant="control" size="iconSm">
+          <Button variant="control" size="iconSm" onClick={toggleFullScreen}>
             <Maximize2 className="h-4 w-4" />
           </Button>
         </div>
