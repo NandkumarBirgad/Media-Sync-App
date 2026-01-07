@@ -315,7 +315,7 @@ export const RoomProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       ...prev,
       mediaUrl,
       mediaTitle: mediaTitle || prev.mediaTitle,
-      mediaState: { ...prev.mediaState, currentTime: 0, isPlaying: true } // Auto-play on change
+      mediaState: { ...prev.mediaState, currentTime: 0, isPlaying: false } // Disable auto-play to respect browser policies
     } : prev);
 
     socketRef.current.emit('media:change', { mediaUrl, mediaTitle });

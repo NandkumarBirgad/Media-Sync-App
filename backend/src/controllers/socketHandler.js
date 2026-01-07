@@ -189,7 +189,7 @@ class SocketHandler {
                 mediaUrl,
                 mediaTitle,
                 currentTime: 0,
-                isPlaying: true, // Auto-play on change
+                isPlaying: false, // Disable auto-play to respect browser policies
             });
 
             console.log(`[Media] Changed in ${room.roomId} to ${mediaUrl} (${mediaTitle})`);
@@ -197,7 +197,7 @@ class SocketHandler {
                 mediaUrl: updatedRoom.mediaUrl,
                 mediaTitle: updatedRoom.mediaTitle || 'Shared Media',
                 currentTime: 0,
-                isPlaying: true, // Auto-play broadcast
+                isPlaying: false, // Disable auto-play broadcast
                 timestamp: Date.now(),
             });
 

@@ -68,6 +68,42 @@ const MediaPlayer: React.FC = () => {
   const { mediaState, mediaTitle, mediaThumbnail, mediaUrl } = room;
   // Use room media URL
   const currentUrl = mediaUrl;
+  const nativeVideoRef = useRef<HTMLVideoElement>(null);
+
+  // Sync Native Video with Room State
+  useEffect(() => {
+    const video = nativeVideoRef.current;
+    if (video && room?.mediaState) {
+      const { isPlaying, currentTime } = room.mediaState;
+
+      // Sync Play/Pause
+      if (isPlaying && video.paused) {
+        video.play().catch(e => console.error("Native play error:", e));
+      } else if (!isPlaying && !video.paused) {
+        video.pause();
+      }
+
+      // Sync Time (only if drift > 1s)
+      if (Math.abs(video.currentTime - currentTime) > 1) {
+        video.currentTime = currentTime;
+      }
+    }
+  }, [room?.mediaState.isPlaying, room?.mediaState.currentTime]);
+
+  const handleNativePlay = () => {
+    if (isHost && !mediaState.isPlaying) updateMediaState({ isPlaying: true });
+  };
+
+  const handleNativePause = () => {
+    if (isHost && mediaState.isPlaying) updateMediaState({ isPlaying: false });
+  };
+
+  const handleNativeTimeUpdate = () => {
+    if (nativeVideoRef.current && !seeking) {
+      setPlayed(nativeVideoRef.current.currentTime);
+      // Optional: Sync back to host if needed, but usually we let the seek commit handle it
+    }
+  };
 
   const progress = mediaState.duration > 0
     ? (played / mediaState.duration) * 100
@@ -89,6 +125,9 @@ const MediaPlayer: React.FC = () => {
     if (playerRef.current) {
       playerRef.current.seekTo(newTime, 'seconds');
     }
+    if (nativeVideoRef.current) {
+      nativeVideoRef.current.currentTime = newTime;
+    }
   };
 
   const handleVolumeChange = (value: number[]) => {
@@ -109,6 +148,9 @@ const MediaPlayer: React.FC = () => {
     updateMediaState({ currentTime: newTime });
     if (playerRef.current) {
       playerRef.current.seekTo(newTime, 'seconds');
+    }
+    if (nativeVideoRef.current) {
+      nativeVideoRef.current.currentTime = newTime;
     }
   };
 
@@ -177,34 +219,52 @@ const MediaPlayer: React.FC = () => {
       />
 
       {/* Media Player Container */}
-      <div className="relative aspect-video rounded-xl overflow-hidden mb-4 bg-muted group bg-black border-2 border-red-500">
-        {/* @ts-ignore */}
-        <ReactPlayer
-          key={currentUrl} // Force remount on URL change
-          ref={playerRef}
-          url={currentUrl}
-          width="100%"
-          height="100%"
-          playing={!!mediaState.isPlaying}
-          volume={mediaState.volume / 100}
-          muted={mediaState.isMuted}
-          onProgress={handleProgress as any}
-          onEnded={() => isHost && updateMediaState({ isPlaying: false })}
-          onError={(e) => {
-            console.error("ReactPlayer Error:", e);
-            toast.error("Error loading video. Format may not be supported or file wasn't found.");
-          }}
-          controls={true} // Enable native controls for debugging
-          style={{ position: 'absolute', top: 0, left: 0 }}
-        />
-
-        {/* FALLBACK RAW VIDEO TEST */}
-        {currentUrl && (
+      <div className="relative aspect-video rounded-xl overflow-hidden mb-4 bg-muted group bg-black shadow-2xl">
+        {currentUrl && currentUrl.includes('/uploads/') ? (
           <video
             src={currentUrl}
+            ref={nativeVideoRef}
+            className="w-full h-full object-contain"
             controls
-            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 50, border: '2px solid yellow' }}
-            onError={(e) => console.error("Raw Video Tag Error", e)}
+            playsInline
+            onPlay={handleNativePlay}
+            onPause={handleNativePause}
+            onTimeUpdate={handleNativeTimeUpdate}
+            onError={(e) => {
+              console.error("Native Video Error", e);
+              toast.error("Error loading video with native player.");
+            }}
+          />
+        ) : (
+          // @ts-ignore
+          <ReactPlayer
+            key={currentUrl} // Force remount on URL change
+            ref={playerRef}
+            url={currentUrl}
+            width="100%"
+            height="100%"
+            playing={!!mediaState.isPlaying}
+            volume={mediaState.volume / 100}
+            muted={mediaState.isMuted}
+            // @ts-ignore - ReactPlayer types are sometimes finicky with custom config
+            config={{
+              file: {
+                attributes: {
+                  controlsList: 'nodownload',
+                  disablePictureInPicture: true,
+                  crossOrigin: "anonymous",
+                  playsInline: true
+                }
+              }
+            }}
+            onProgress={handleProgress as any}
+            onEnded={() => isHost && updateMediaState({ isPlaying: false })}
+            onError={(e) => {
+              console.error("ReactPlayer Error:", e);
+              toast.error("Error loading video (Check console).");
+            }}
+            controls={true} // Enable native controls as fallback
+            style={{ position: 'absolute', top: 0, left: 0 }}
           />
         )}
 
