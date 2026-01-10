@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactPlayer from 'react-player';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
+import { BACKEND_URL } from '@/config';
 import {
   Play,
   Pause,
@@ -312,7 +313,7 @@ const MediaPlayer: React.FC = () => {
 
       const uploadPromise = new Promise<{ url: string }>(async (resolve, reject) => {
         try {
-          const response = await fetch(`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000'}/api/media/upload`, {
+          const response = await fetch(`${BACKEND_URL}/api/media/upload`, {
             method: 'POST',
             body: formData,
           });
