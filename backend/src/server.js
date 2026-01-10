@@ -22,6 +22,9 @@ async function startServer() {
     const socketHandler = new SocketHandler(io);
     socketHandler.initialize();
 
+    // Increase timeout for large uploads (100GB)
+    server.setTimeout(0);
+
     server.listen(config.port, () => {
       console.log('='.repeat(50));
       console.log('🚀 Media Sync Backend Server');

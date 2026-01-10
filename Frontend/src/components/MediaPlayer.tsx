@@ -27,7 +27,7 @@ const formatTime = (seconds: number) => {
 const MediaPlayer: React.FC = () => {
   const { room, isHost, updateMediaState, changeMedia } = useRoom();
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
-  const playerRef = useRef<ReactPlayer>(null);
+  const playerRef = useRef<any>(null);
   const nativeVideoRef = useRef<HTMLVideoElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const progressBarRef = useRef<HTMLDivElement>(null);
@@ -38,6 +38,18 @@ const MediaPlayer: React.FC = () => {
   const [seeking, setSeeking] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [localProgress, setLocalProgress] = useState(0);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  }, []);
 
   // Sync player position with room state when not host
   useEffect(() => {
@@ -363,17 +375,16 @@ const MediaPlayer: React.FC = () => {
             }}
           />
         ) : (
-          // @ts-ignore
           <ReactPlayer
+            // @ts-ignore
+            url={currentUrl}
             key={currentUrl}
             ref={playerRef}
-            url={currentUrl}
             width="100%"
             height="100%"
             playing={!!mediaState.isPlaying}
             volume={mediaState.volume / 100}
             muted={mediaState.isMuted}
-            // @ts-ignore
             config={{
               file: {
                 attributes: {
@@ -383,7 +394,7 @@ const MediaPlayer: React.FC = () => {
                   playsInline: true
                 }
               }
-            }}
+            } as any}
             onProgress={handleProgress as any}
             onDuration={handleDuration}
             onEnded={() => isHost && updateMediaState({ isPlaying: false })}
@@ -399,13 +410,15 @@ const MediaPlayer: React.FC = () => {
         <div className="absolute inset-0 bg-gradient-to-t from-background/80 via-transparent to-transparent pointer-events-none" />
 
         {/* Live Sync Indicator */}
-        <div className="absolute top-4 left-4 flex items-center gap-2 glass px-3 py-1.5 rounded-full z-10">
+        {/* Live Sync Indicator */}
+        <div className={`absolute top-4 left-4 flex items-center gap-2 glass px-3 py-1.5 rounded-full z-10 ${isFullscreen ? 'hidden' : ''}`}>
           <Radio className="h-4 w-4 text-primary animate-sync-pulse" />
           <span className="text-xs font-medium text-foreground">LIVE SYNC</span>
         </div>
 
         {/* Host Controls Badge & Upload */}
-        <div className="absolute top-4 right-4 flex items-center gap-2 z-30">
+        {/* Host Controls Badge & Upload */}
+        <div className={`absolute top-4 right-4 flex items-center gap-2 z-30 ${isFullscreen ? 'hidden' : ''}`}>
           {isHost && (
             <>
               <Button

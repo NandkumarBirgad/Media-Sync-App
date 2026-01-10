@@ -88,7 +88,7 @@ function initializeRoutes(roomService) {
 
   const upload = multer({
     storage: storage,
-    limits: { fileSize: 500 * 1024 * 1024 } // 500MB limit
+    limits: { fileSize: 100 * 1024 * 1024 * 1024 } // 100GB limit
   });
 
   router.post('/media/upload', upload.single('video'), (req, res) => {
